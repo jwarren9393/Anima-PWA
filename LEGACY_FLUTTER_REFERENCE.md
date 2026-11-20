@@ -1,0 +1,828 @@
+# Anima — Complete Project Reference
+
+> **Purpose:** Single document for external AI assistants (Gemini, ChatGPT, Claude, etc.) and humans who need the **full** picture of Anima — architecture, data, UI, mechanics, and NanoGPT integration.
+>
+> **Also read for day-to-day coding in Cursor:** [`AGENTS.md`](AGENTS.md) (living status, roadmap, agent rules).  
+> **Also read for user-facing feature catalog:** [`README.md`](README.md) (screen-by-screen product guide).
+>
+> **Living documents:** `AGENTS.md` + this file + `README.md` are kept current together — see §29 for the upkeep rule every agent must follow.
+
+**Last updated:** 2026-10-05 · **Version:** 1.0.0 build **76** · **Tests:** 404 (`flutter test`)
+
+---
+
+## Table of contents
+
+1. [What Anima is](#1-what-anima-is)
+2. [Architecture at a glance](#2-architecture-at-a-glance)
+3. [Technology stack](#3-technology-stack)
+4. [Security and secrets](#4-security-and-secrets)
+5. [Repository layout](#5-repository-layout)
+6. [Application bootstrap](#6-application-bootstrap)
+7. [Data models](#7-data-models)
+8. [Persistence and local files](#8-persistence-and-local-files)
+9. [NanoGPT backend integration](#9-nanogpt-backend-integration)
+10. [Prompt assembly (how a chat turn is built)](#10-prompt-assembly-how-a-chat-turn-is-built)
+11. [Chat message types and steering tools](#11-chat-message-types-and-steering-tools)
+12. [Regular chat mechanics](#12-regular-chat-mechanics)
+13. [Group chat mechanics](#13-group-chat-mechanics)
+14. [World Info / lorebooks](#14-world-info--lorebooks)
+15. [Memory summary and auto-summarize](#15-memory-summary-and-auto-summarize)
+16. [Character cards and personas](#16-character-cards-and-personas)
+17. [Creation Center (workshops)](#17-creation-center-workshops)
+18. [UI map — every major screen](#18-ui-map--every-major-screen)
+19. [Settings hub — complete menu](#19-settings-hub--complete-menu)
+20. [AI collaborator utilities](#20-ai-collaborator-utilities)
+21. [Theming and chat experience](#21-theming-and-chat-experience)
+22. [Backup and restore (local only)](#22-backup-and-restore-local-only)
+23. [Import and export](#23-import-and-export)
+24. [Avatars and image generation](#24-avatars-and-image-generation)
+25. [Macros](#25-macros)
+26. [Testing and quality](#26-testing-and-quality)
+27. [Build, release, and desktop branding](#27-build-release-and-desktop-branding)
+28. [Known limits and not implemented](#28-known-limits-and-not-implemented)
+29. [Related documents](#29-related-documents)
+
+---
+
+## 1. What Anima is
+
+**Anima** is a **private, personal** AI character roleplay chat app. It is **not** published to app stores.
+
+| Item | Value |
+|------|--------|
+| Inspiration | **SillyTavern-like** RP on mobile — **not** a full SillyTavern clone |
+| UI | **Flutter** (Android primary; Linux + Windows desktop) |
+| AI backend | **[NanoGPT](https://nano-gpt.com)** — OpenAI-compatible chat + image APIs |
+| Repo | Private: https://github.com/jwarren9393/Anima |
+| Owner use | Personal only |
+
+**Product rule:** Prefer high-value SillyTavern concepts that work on a phone. Do not chase full ST parity. Keep architecture simple.
+
+---
+
+## 2. Architecture at a glance
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Flutter app (Anima) — all logic on device                  │
+│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────────┐ │
+│  │ Screens/UI  │→ │ Services     │→ │ Local JSON + secure │ │
+│  │ widgets     │  │ prompt build │  │ storage (no server) │ │
+│  └─────────────┘  └──────────────┘  └─────────────────────┘ │
+└───────────────────────────┬─────────────────────────────────┘
+                            │ HTTPS (user's API key)
+                            ▼
+              ┌─────────────────────────────┐
+              │ NanoGPT API (cloud)         │
+              │ /api/v1/chat/completions    │
+              │ /api/v1/images              │
+              │ model catalogs, credits     │
+              └─────────────────────────────┘
+```
+
+- **No Anima backend server.** The app is a thick client.
+- **No bundled API key.** User enters key in Settings → stored in `flutter_secure_storage`.
+- **All chat history, cards, lore** live in app documents directory as JSON (+ avatar images).
+
+---
+
+## 3. Technology stack
+
+| Layer | Choice |
+|-------|--------|
+| Framework | Flutter 3.x, Dart 3.x |
+| State | `StatefulWidget` + services; `AppearanceController` for global theme |
+| HTTP | `package:http` — streaming SSE + non-streaming `complete()` |
+| Secrets | `flutter_secure_storage` |
+| Paths | `path_provider` → app documents directory |
+| Files | `file_picker`, `share_plus`, Android `saf` for sync URIs |
+| Fonts | `google_fonts` |
+| Tests | `flutter_test` — 404 tests |
+
+**Platforms:** Android (primary), Linux desktop, Windows desktop. macOS not targeted.
+
+---
+
+## 4. Security and secrets
+
+| Rule | Detail |
+|------|--------|
+| API key | **Never** in source, README examples, screenshots in git, or `.anima-backup`. Lives in the user library folder as `api_key.txt`. |
+| Storage | User-owned Anima folder (`AppDataRoot`); default `Documents/Anima`. Hidden app storage only keeps a pointer to that folder. |
+| Backup | Whitelist JSON export **excludes** API key on purpose (copy the folder if you want the key too) |
+| Git | `android/local.properties` gitignored; never commit the Anima library folder |
+
+If a key is ever committed: rotate NanoGPT key immediately and purge git history.
+
+---
+
+## 5. Repository layout
+
+```
+Anima/
+  lib/                    # All Dart app code
+    main.dart             # Entry: AppearanceController + MaterialApp
+    models/               # Data classes + presets
+    screens/              # Full-screen UI
+    widgets/              # Reusable UI + sheets
+    services/             # Business logic, API, persistence
+    theme/                # ThemeData factory, glass backdrop
+    utils/                # Platform, scroll, Windows paste
+  test/                   # Unit/widget tests
+  assets/branding/        # anima_icon.png (Android + desktop)
+  android/ linux/ windows/ # Platform runners
+  scripts/
+    setup_linux_dev.sh    # fresh Linux install: apt deps, JDK 17, Flutter, Android SDK, gh, env vars, Cursor
+    setup_linux_dev_noroot.sh # same, with NO sudo: Flutter + Temurin JDK 17 + Android SDK inside $HOME, env vars, Cursor path, git identity (prints the apt line for the desktop libs)
+    sync_phone_anima.sh   # no-cloud transfer: copies the backup file (or the whole library) to/from the phone over USB/Wi-Fi adb
+    setup_windows_dev.ps1 # fresh Windows install: winget JDK 17/gh/platform-tools, Flutter at C:\src\flutter, Android SDK, VS Build Tools, env vars, Developer Mode
+    install_windows_atl.ps1 # adds C++ ATL to an existing VS Build Tools install (needed for Windows desktop builds)
+    dev_copy_linux.sh     # buildable working copy at ~/Anima when the source sits on exFAT
+    update_linux.sh       # Linux build + install
+    update_windows.ps1    # Windows build + zip + optional gh release (local fallback)
+    upload_github_release.ps1 # APK + Windows zip upload (⚠️ replaces the APK asset)
+  .github/workflows/
+    windows-release.yml   # GitHub Actions: Windows zip → existing v1.0.0 release
+  AGENTS.md               # Cursor agent living doc (status, roadmap)
+  README.md               # User feature catalog
+  PROJECT_REFERENCE.md    # This file — full encyclopedia
+  pubspec.yaml            # version 1.0.0+NN (build number)
+```
+
+### `lib/` code map (authoritative paths)
+
+**Models** (`lib/models/`)
+
+| File | Role |
+|------|------|
+| `chat_message.dart` | Message bubble: `ChatRole` user / assistant / **narrator**; swipes; group speaker |
+| `chat_session.dart` | Thread: messages, note, persona, lore picks, memory, group cast |
+| `character.dart` | ST-compatible card fields + Anima id + embedded lorebook |
+| `persona.dart` | Structured {{user}} identity fields |
+| `lorebook.dart` | World Info entries (ST import shapes) |
+| `global_lorebook.dart` | Standalone lorebook id + enabled flag |
+| `character_category.dart` | Anima-only category lists (not ST tags) |
+| `world_workshop.dart` | Creation Center workshop state |
+| `workshop_hub_models.dart` | Hub: play plan, kit, locations, relationships, scene ideas |
+| `chat_experience_settings.dart` | Classic vs Storybook, backgrounds, bubble opacity |
+| `ui_style_settings.dart` | Theme Studio + `AnimaUiTheme` extension |
+| `theme_palette.dart` | Colors, fonts, 8 presets |
+| `anima_presets.dart` | Sampling + text presets (Author's Note, guidance) |
+| `workshop_chat_import_options.dart` | Toggles when seeding workshop from chat |
+
+**Screens** (`lib/screens/`)
+
+| File | Role |
+|------|------|
+| `home_screen.dart` | Chat history, Creation Center row, New FAB |
+| `chat_screen.dart` | Main RP UI — largest file (~4000+ lines) |
+| `group_chat_setup_screen.dart` | New/edit group cast |
+| `characters_screen.dart` | Card list, import/export, categories |
+| `character_edit_screen.dart` | Full card editor + lore + wand |
+| `personas_screen.dart` | Persona list / pick-for-chat |
+| `persona_edit_screen.dart` | Persona editor + wand + avatar |
+| `lorebooks_screen.dart` | Global lorebook list |
+| `lorebook_edit_screen.dart` | Entry list + entry editor |
+| `lore_settings_screen.dart` | Scan depth/budget + link to global books |
+| `world_workshop_list_screen.dart` | Creation Center list |
+| `world_workshop_chat_screen.dart` | Workshop chat (NOT regular chat) |
+| `settings_screen.dart` | Settings hub |
+| `api_settings_screen.dart` | API key, model catalog browser |
+| `sampling_settings_screen.dart` | Temperature, context, auto-summarize |
+| `collaborator_settings_screen.dart` | Wand, Format, Paths, **Narrator** notes |
+| `character_build_settings_screen.dart` | Slim card JSON generation model |
+| `global_chat_prompts_screen.dart` | App-wide system + post-history |
+| `appearance_settings_screen.dart` | Theme Studio |
+| `backup_restore_screen.dart` | Backup + restore (local only) |
+
+**Services** (`lib/services/`)
+
+| File | Role |
+|------|------|
+| `nanogpt_service.dart` | Streaming chat, `complete()`, catalogs, images, credits |
+| `api_key_service.dart` | Secure API key |
+| `settings_service.dart` | All preferences + `SamplingSettings` + `CollaboratorSettings` + `FavoriteModel` (starred NanoGPT models) |
+| `prompt_builder.dart` | System prompt, post-history, narrator/director blocks, macros |
+| `chat_context_service.dart` | History trim, memory summarize prompts |
+| `chat_service.dart` | Save/load `anima_chats.json` |
+| `character_service.dart` | `anima_characters.json` |
+| `persona_service.dart` | `anima_personas.json` |
+| `lorebook_service.dart` | Keyword scan, budget, injection |
+| `world_info_service.dart` | `anima_lorebooks.json` |
+| `narrator_service.dart` | Chat Narrator generate + prompt injection + output cleanup |
+| `roadway_service.dart` | Paths brainstorm + combine |
+| `roadway_cache_service.dart` | Per-chat cached path options |
+| `message_formatter.dart` | Composer ✨ Format |
+| `reply_rewrite_service.dart` | Rewrite reply modes |
+| `character_collaborator.dart` | Character wand prompts (+ Compact / Expand / cross-reference) |
+| `persona_collaborator.dart` | Persona wand (+ Compact / Expand / cross-reference) |
+| `lore_collaborator.dart` | Lore entry wand + keyword suggest |
+| `world_workshop_builder.dart` | All Creation Center AI prompts + JSON parsers |
+| `world_workshop_service.dart` | Workshop persistence |
+| `workshop_hub_service.dart` | Hub CRUD, bundle import/export |
+| `workshop_hub_controller.dart` | Hub AI actions |
+| `composer_draft_service.dart` | Per-chat composer autosave |
+| `chat_transcript_codec.dart` | Chat JSON / plain export |
+| `character_card_codec.dart` | ST V1/V2/V3 + PNG chara chunk |
+| `persona_card_codec.dart` | Persona JSON import — app format, AI-written cards, aliases, lists, backups |
+| `persona_guide_service.dart` | Player-direction block for the player's own next line (My line…) |
+| `app_backup_service.dart` | `.anima-backup` whitelist |
+| `avatar_service.dart` | Local avatar files |
+| `avatar_prompt_builder.dart` | Image prompt from card/persona text |
+| `chat_background_service.dart` | User chat background images |
+| `appearance_controller.dart` | Root theme reload |
+| `speaker_prefix.dart` | Strip `Name:` from group AI replies |
+
+---
+
+## 6. Application bootstrap
+
+`lib/main.dart`:
+
+1. `AnimaBootstrap` loads `AppDataRoot` (user-owned library folder). First launch shows `DataFolderSetupScreen` if none is chosen. `load()` **never throws** — a library folder that exists but cannot be written (Android right after an install, before "All files access" is granted) returns "not configured" so `_boot()` / `_onFolderReady()` fall back to the setup screen instead of leaving the app on the loading spinner.
+2. Loads `AppearanceController` / `UiStyleSettings` from `anima_settings.json` in that folder.
+3. Builds `ThemeData` via `anima_theme.dart`.
+4. `MaterialApp` → `HomeScreen` with injected services (API key, chat, characters, etc.).
+
+No global state management package — services passed as constructor args.
+
+---
+
+## 7. Data models
+
+### `ChatMessage` (`chat_message.dart`)
+
+| Field | Meaning |
+|-------|---------|
+| `id` | Stable id for edit/delete/swipe |
+| `role` | `ChatRole.user`, `ChatRole.assistant`, or `ChatRole.narrator` |
+| `text` | Visible text (current swipe for assistants) |
+| `swipes` | Alternate AI generations (assistant only) |
+| `swipeIndex` | Which swipe is shown |
+| `speakerId` / `speakerName` | Group chat — who spoke (assistant) |
+
+**API mapping:** `toApiMap()` → user/assistant only. **Narrator** messages are converted in `chat_screen._buildApiMessages()` to **system** blocks (see §10).
+
+### `ChatSession` (`chat_session.dart`)
+
+| Field | Meaning |
+|-------|---------|
+| `messages` | Ordered chat log |
+| `authorsNote` | Per-chat instructions (post-history injection) |
+| `personaId` | Which persona is {{user}} |
+| `autoReply` | Send also triggers AI reply (default **off** for new chats) |
+| `lorebookIds` | `null` = use global enabled books; list = override |
+| `memorySummary` | Long-term folded story text |
+| `memoryCoveredCount` | Messages already folded into memory |
+| `participantIds` | Group cast (2+ = group) |
+| `nextSpeakerIndex` | Round-robin / chip selection |
+| `sourceWorkshopId` | Provenance from Creation Center |
+| `castJoinedAt` | `Map<String,int>` — message count when each character id joined; empty for legacy chats. See §12 for prompt-level effects |
+
+### `Character` — SillyTavern-compatible card
+
+Key fields: `name`, `description`, `personality`, `scenario`, `first_mes`, `alternate_greetings`, `mes_example`, `system_prompt`, `post_history_instructions`, embedded `character_book` (lore), `avatarFileName`.
+
+### `Persona` — structured {{user}}
+
+Fields: `name`, identity/role, appearance, personality, background, goals → `promptText` for system injection.
+
+### `Lorebook` / entries
+
+Keyword-triggered content; ST JSON import; scan depth, token budget, recursive scan, priority, selective keys.
+
+### `WorldWorkshop` — Creation Center
+
+Workshop chat messages, world summary, linked lorebook, hub fields (kit, pins, glossary export, scene ideas, etc.). **Separate** from `ChatSession`. **No opening scene field — Narrator / Director cards are timeline messages inside live chats, never saved here.**
+
+---
+
+## 8. Persistence and local files
+
+All library files live in **one user-owned folder** (`AppDataRoot`, default `Documents/Anima`). Services resolve it through `appDocumentsDirectory()`. A pointer file in app-support storage remembers the path.
+
+**Adopting an existing library must never throw** (`app_data_root.dart`): `load()` wraps the whole path resolution (saved pointer → `Documents/Anima` → portable `AnimaData`) in a try/catch, checks each candidate with `_isUsableDirectory()` (exists + write probe) before adopting it, and returns `false` when nothing is writable. `setPath()` still throws `AppDataRootException` for the explicit "user picked a folder" flows (that message is shown in the sheet), but the automatic startup path cannot. Regression tests: `test/app_data_root_test.dart` ("load does not throw when the existing library folder is not writable", "load adopts the public library once the folder is writable again").
+
+| File / folder | Contents |
+|---------------|----------|
+| `api_key.txt` | NanoGPT API key |
+| `anima_settings.json` | Model ids, sampling, theme JSON, collaborator notes, sync URIs, etc. |
+| `anima_active_persona_id.txt` | Default persona id |
+| `anima_characters.json` | Character cards |
+| `anima_character_categories.json` | Category lists |
+| `anima_personas.json` | Personas |
+| `anima_chats.json` | All chat sessions + messages |
+| `anima_lorebooks.json` | Global lorebooks |
+| `anima_world_workshops.json` | Creation Center workshops |
+| `anima_composer_drafts.json` | Unsent composer text per chat id |
+| `anima_roadway_cache.json` | Cached Paths options per chat |
+| `avatars/` | Local avatar images |
+| `chat_backgrounds/` | User-picked chat backgrounds |
+| `README.txt` | Explains that this folder is the library |
+
+**Character saves** (`character_service.dart`): every write is flushed to disk (`flush: true`) with one automatic retry; concurrent saves are serialized through a write queue so a read-modify-write can never clobber another card (e.g. a quick temporary-NPC save racing an editor save); `upsert()` re-reads the file after writing and throws if the card did not land, so the editor can show the error and stay open instead of closing and silently losing edits.
+
+**Backup** (`AppBackupService`): single `.anima-backup` JSON with whitelist above + settings keys + base64 avatars. **No API key.** Copy the whole Anima folder to move the key too.
+
+**Sync — removed in build 72.** There is no cloud feature in the app any more: no `SyncService`, no sync file, no rclone mount, no Google. See §22 for how data moves between devices now (`scripts/sync_phone_anima.sh` optionally copies a `.anima-backup` over adb).
+
+
+---
+
+## 9. NanoGPT backend integration
+
+**Service:** `lib/services/nanogpt_service.dart`
+
+### Endpoints
+
+| Use | URL |
+|-----|-----|
+| Chat (pay-as-you-go) | `https://nano-gpt.com/api/v1/chat/completions` |
+| Chat (subscription) | `https://nano-gpt.com/api/subscription/v1/chat/completions` |
+| Images | `{base}/images` |
+| Model catalog | Detailed text + image catalogs; provider routing stats |
+
+**Auth:** `Authorization: Bearer <API_KEY>`
+
+### Main operations
+
+| Method | Use |
+|--------|-----|
+| `streamChatCompletion` | Regular chat + Creation Center — SSE streaming |
+| `complete()` | One-shot: memory summarize, narrator generate, wands, Paths, JSON export, Format |
+| `generateImage` | Avatar generation |
+| `fetchTextModelCatalog` | Settings model picker + Browse models sheet |
+| `fetchCreditUsage` | Remaining credits display |
+
+### Streaming behavior
+
+- User can **Stop** — partial text kept (`NanoGptCancelledException`).
+- Chat list does **not** auto-scroll during streaming.
+
+### Model catalog UI (`api_settings_screen.dart`)
+
+- Category filter (incl. **Uncensored & derestricted (broad)** heuristic).
+- Provider filter.
+- **Browse models** sheet: context window, max output, params, TPS, TTFT, uptime, description, capabilities, pricing.
+- **Favorite models** — tap the star on any model row or on the selected model card to save it. Starred models get a ⭐ badge and a **Favorites** filter at the top of the sheet. Stored in `anima_settings.json` (`FavoriteModel`, newest-first, deduped by id) — survives restarts, included in backup/sync.
+
+---
+
+## 10. Prompt assembly (how a chat turn is built)
+
+**Primary code:** `chat_screen.dart` → `_buildApiMessages()`  
+**Helpers:** `prompt_builder.dart`, `lorebook_service.dart`, `chat_context_service.dart`, `narrator_service.dart`
+
+### Order of messages sent to NanoGPT
+
+1. **System:** `PromptBuilder.buildSystemPrompt()`  
+   - Mode: `normal`, `continueScene`, or `impersonate`  
+   - Card system prompt or Anima default seed  
+   - Group: other member summaries  
+   - Lore **before character** (keyword hits)  
+   - Description, personality, scenario, example dialogue  
+   - Lore **after character**  
+   - Persona block  
+   - Global system prompt (Settings)
+
+2. **System (optional):** Memory summary — clinical bullet facts via `ChatContextService.formatMemoryForPrompt()` (reference only; do not mimic tone)
+
+3. **History:** `ChatContextService.selectHistory()` — recent messages within **history token budget** (skips messages already in `memoryCoveredCount` when possible)
+
+   For each history message:
+   - **Narrator** (`ChatRole.narrator`) → **system** block via `NarratorService.formatForPrompt()` (omniscient scene law; the latest narrator beat is broadcast to the present cast, older beats are background only)
+   - **Director** (`ChatRole.director`) → **system** block via `DirectorService.formatActiveInstruction()` — the **pending** Director note is injected late as a mandatory override; older director notes are omitted from history
+   - **Group assistant** → `SpeakerName: body` (prefix stripped from body if duplicated)
+   - **User / solo assistant** → `message.toApiMap()`
+
+4. **Optional:** Rewrite messages (`ReplyRewriteService`) when regenerating with rewrite mode
+
+5. **Optional nudges** (if not rewriting):
+   - Greeting nudge (alternate opening)
+   - Continue: `(Continue. Write only the next reply as …)` (first person)
+   - Impersonate: early user nudge — then **no** character-forcing late nudges (post-scene-law / group handoff are skipped)
+
+6. **System:** `PromptBuilder.buildPostHistory()`  
+   - Global post-history  
+   - Per-card post-history (skipped during Impersonate so card voice cannot pull the model back to {{char}})  
+   - Author's Note  
+   - Modern chat tone + **first-person perspective** for the speaker of this turn
+
+7. **Late mandatory blocks:** narrator scene law (addressed to the **player** during Impersonate), Director (skipped during Impersonate), then for Impersonate only: optional `PLAYER GUIDE` + final “write ONLY {{user}}” lock
+
+### Sampling
+
+From **Settings → Generation parameters** (`SamplingSettings`): temperature, top_p, max_tokens, frequency/presence/repetition penalties.
+
+Special tuned sampling for: memory summarize, narrator generate, composer format, some workshop exports.
+
+---
+
+## 11. Chat message types and steering tools
+
+| Mechanism | Where it lives | How model sees it | Purpose |
+|-----------|----------------|-------------------|---------|
+| **Normal user send** | `ChatRole.user` in history | `role: user` | Player RP as {{user}} |
+| **OOC** | User message `(OOC: …)` | `role: user` | Soft player direction (convention, not enforced system rule) |
+| **Narrator** (theater icon) | `ChatRole.narrator` in timeline | `role: system` narrator block | Omniscient scene voice + scene law |
+| **Director** (control-camera) | `ChatRole.director` in timeline | `role: system` director block (pending note only, late) | Mandatory command for the **next** AI reply |
+| **Author's Note** | `ChatSession.authorsNote` | Post-history system | Every-turn steer |
+| **Memory summary** | `ChatSession.memorySummary` | System before history (clinical bullets; reference-only wrapper) | Long-term facts, not voice |
+| **Lore hits** | Injected in system prompt | World info sections | Keyword-triggered facts |
+| **Continue** | No new user line | Continue nudge user message | Next char reply |
+| **Impersonate** | Empty `ChatRole.user` bubble (no cast speaker stamp) | Player-perspective system + Impersonate nudges + final lock | AI writes {{user}} line in first person |
+| **Rewrite reply** | After AI bubble exists | Extra rewrite messages | Fix/regenerate that bubble only |
+| **Paths** | Composer only | Not sent until user sends | Brainstorm {{user}} options |
+| **Global prompts** | Settings | System + post-history | App-wide steer |
+
+**Narrator sheet flow** (`narrator_sheet.dart`): optional **nudge** → editable **Narrator line** → **Generate** (AI) or type manually → **Post**. `NarratorService.buildGenerateMessages()` infers **present cast** from the last 10 chat lines (not full group roster); splits **current scene** vs **older background** transcript; direct prose, no sanitizing. Generate uses capped ~420 max tokens + `cleanGeneratedOutput()`.
+
+**Not in Creation Center:** Narrator theater button is solo/group chat only.
+
+---
+
+## 12. Regular chat mechanics
+
+**Screen:** `chat_screen.dart`
+
+### Chrome
+
+- App bar: Close · title · ⋮ menu (**leads with "API & connection"** → `api_settings_screen.dart` for quick model swaps mid-chat)
+- **Android:** Director + Continue buttons **above** the composer (stay visible with keyboard); typing row is **+** (Narrator / moods) · field · Send/Stop. No delete-confirm dialogs or bottom SnackBars in chat (errors use the banner above the composer).
+- **Desktop:** moods · Narrator · Director · field · ▶ Continue · Send/Stop
+- Chips: Memory, Note (when set); group speaker chips (hidden when keyboard open)
+
+### Message actions
+
+- **Tap** bubble → edit text
+- **Tap narrator card** → reopen narrator sheet
+- **Long-press** → menu: Delete, Rewind, Branch, **Narrator**, Continue, Impersonate, **My line…**, Paths, Auto-reply, Rewrite/Regen/Swipe (AI only)
+- **Quick swipe** ◀ 1/N ▶ on latest AI message
+
+### My line sheet (player side)
+
+- **My line…** (long-press menu) opens `_MyLineSheet` in `chat_screen.dart` — writes the **player's own** next message, the persona-side counterpart of Guide AI. It exists because `PromptMode.impersonate` had no way to steer the line.
+- **Steer my line** → `_impersonate(guideNote: …)`; the note is stored on the bubble as `generationKind: impersonate` + `generationGuide`, and also reaches the API through `_streamIntoLastAssistant` → `_streamAssistantReply` → `_buildApiMessages(playerGuideNote:)`, which appends `PersonaGuideService.formatPlayerDirection()` as a **final** late mandatory system block (after narrator/post-history) plus a last Impersonate lock so nothing can yank the model back to {{char}}. An empty box → `PersonaGuideService.defaultInstruction`.
+- **Just write it (no steers)** → plain `_impersonate()` with `generationKind: impersonate` and an empty guide (still regenerable as plain Impersonate).
+- **Regenerate / New swipe** on that bubble reuses the saved `generationGuide` (menu subtitle shows “Keeps your steer: …”). Same for **Guide AI** character replies (`generationKind: characterGuide`).
+- Impersonate system prompt uses `PresenceService.formatPlayerPerspectiveBoundary()` instead of the normal “You are {{char}}” knowledge boundary, skips card post-history, and labels character card fields as “other person / reference only”.
+- Guide AI (cast chip → composer) is unchanged for sending — also first person (`*I…*` actions) — and now persists the note for regen/swipe.
+- **First-person law:** `ChatStyleRules.formatFirstPersonPerspectiveRule()` is injected in every post-history block for the speaker of that turn.
+- Long-press menu order (top cluster): Paths · Impersonate · My line… · Regenerate · Rewrite reply…
+- **Paths direction** is stored in `RoadwayCacheEntry.direction` with the options; reopening the sheet restores the steer box so Refresh keeps the same prompt.
+
+### Auto-reply
+
+- Default **off**. Off = send only; use Continue or (group) tap name chip.
+- On = send (and narrator post) also queue AI reply.
+
+### Paths (Roadway)
+
+- Long-press → **Paths** sheet (`_PathsSheet` in `chat_screen.dart`).
+- `RoadwayService.buildMessages()` — first-person options only; recent chat labels player as **You (player):** not persona name.
+- `RoadwayService.generateSampling()` — capped tokens + repeat penalties; `parseOptions()` dedupes; `normalizeUserPerspective()` fixes `*Name*` leaks.
+- **Direction field** — the sheet's optional "Steer these paths" box is passed to `buildMessages(direction: …)`, which adds "The player asked for paths like this" plus *every option must follow that request — write N variations*; empty keeps the plain brainstorm.
+- Cached per chat in `anima_roadway_cache.json` until anchor message changes or refresh.
+- **Combine selected** — `buildCombineMessages()` merges 2+ picks into one composer draft.
+
+### Auto memory summarize
+
+- Runs in **background** (`_summarizing` flag) — UI stays usable.
+- Threshold: Settings “summarize every N messages” since `memoryCoveredCount`.
+- No chained back-to-back summarizes.
+
+### Other
+
+- Composer draft autosave per chat
+- Lore hit toast overlay
+- Context estimate (⋮ menu)
+- Export/import transcript
+- Manage cast (rename groups, add/remove cast)
+- **Add / update character…** (⋮ hub, `add_update_character_sheet.dart`) — one menu for **New character from this chat** (optionally **based on** a chosen character + persona — each optional; blank = classic flow), **Add temporary character**, **Update saved character from chat**
+- **Mid-chat character join-awareness** — `ChatSession.castJoinedAt` records the message count when each character was added. `PresenceService` methods accept `joinedAtMessageCount`: a character who joined mid-chat sees **all non-Director messages from their join point onward** in both presence filtering and narrator scene backdrop. A **catch-up block** (`_buildCatchUpBlock`) injects a brief "You just entered the scene. From what you can see and hear:" context from the 5 messages before the join time, stripped of private/asterisk-only text.
+
+---
+
+## 13. Group chat mechanics
+
+- Storage bucket id separate from solo (`ChatService.groupsKey`).
+- **Speaker chips:** pick next speaker; when auto-reply off, tap chip **always generates** that character's reply.
+- **Group react** (`GroupReplyService` + sheet): one `complete()` call → parse `Name: reaction` lines → multiple assistant bubbles; capped sampling for brief beats; cast not in recent chat listed as silent.
+- Prompt includes short summaries for other members.
+- `speaker_prefix.dart` strips leading `Name:` from AI output to avoid duplicate headers.
+- Optional custom **Chat name** on Home.
+
+---
+
+## 14. World Info / lorebooks
+
+**Service:** `lorebook_service.dart` + `world_info_service.dart`
+
+- **Global lorebooks** — enable/disable, import ST JSON, per-chat override.
+- **Embedded `character_book`** on character cards — always when that character speaks.
+- **Scan:** recent messages (depth setting) for keywords.
+- **Budget:** token cap; priority ordering.
+- **Recursive scan:** matched entry content can trigger further entries (toggle in Settings).
+- **Toast:** “Lore Triggered: …” when entries inject.
+
+Entry editor: AI wand on label/keywords/content; suggest keywords from content.
+
+---
+
+## 15. Memory summary and auto-summarize
+
+- **Manual:** ⋮ → Memory summary (Scene + Ledger editor with pins) or Summarize now.
+- **Two layers** (one stored string `memorySummary`):
+  - **Scene** — Location / Present / Time. Replaced each summarize from the newest chunk (carried forward if the chunk does not mention a new place).
+  - **Ledger** — durable Thread / Promise / Secret / Relationship / Goal / Item / Injury / Event. **Merged**, not rewritten. Newest does **not** win. Threads stay until explicitly resolved.
+  - **Pins** — `[pin]` ledger lines; editor pin toggle; restored after AI if the model drops them.
+- **Parser:** `MemorySummaryDocument` in `lib/models/memory_summary.dart`. Unlabeled old bullets: Location/Present → Scene, everything else → Ledger.
+- **Auto:** Settings → summarize every N messages.
+- **Injection:** `formatMemoryForPrompt()` wraps stored text as a **reference-only** system block before history — explicitly tells the model not to mimic summary tone/style. Presence filter keeps `##` headers and strips `[pin]` when matching witness tags.
+- **Summarize prompt:** `memorySummarizeSystemPrompt` — two-section merge; protect `[pin]` and unresolved `Thread:`; must finish last bullet.
+- **Caps:** ledger target grows with covered length (35–90 bullets); Scene ≤ 10. Sampling **1024–4096** (defaults **2048** when chat max_tokens unset/low); temperature ≤ **0.25**.
+- **Fold:** older messages (keep recent N raw) via `buildSummarizeMessages()` + `finalizeSummarizeOutput()` (pin restore). Empty model output does **not** advance `memoryCoveredCount`.
+- **Background:** does not block chat UI (`_summarizing` vs `_busy`).
+- **Existing chats:** old flat bullets are classified on the next parse/summarize; run **Summarize now** to convert to Scene/Ledger.
+
+---
+
+## 16. Character cards and personas
+
+### Characters
+
+- Full ST field set; import/export JSON + PNG (`chara` / `ccv3`).
+- **Categories** — Anima-only lists (multi-membership).
+- **AI wand** on creative fields — appends text using `character_collaborator.dart`.
+- **Consistency check** — read-only AI report.
+- **Generate avatar** — NanoGPT image + `avatar_prompt_builder.dart`.
+- **Character & persona builds** (Settings) — shared model + sampling for **full JSON** card generation; separate **character** and **persona** build prompts (`CharacterBuildSettings` in `settings_service.dart`). Used by Creation Center export, chat import sheets, and AI builders — **not** field wands.
+- **Duplicate** — ⋮ menu on Characters and Personas list copies with new id.
+- **Compact / Expand** — AI shortens or enriches fields with a review sheet before apply (Compact: card, persona, lorebook, entry; **Expand: character card and persona only** — the AI invents new interesting details from what’s already there, no prompts needed).
+- **Base on another card… (cross-reference)** — character + persona editor ⋮ menus. Pick any other character or persona (`cross_reference_source_sheet.dart` — Characters/Personas tabs + optional "How should they connect?" note) and the AI drafts the card being edited grounded in the source's shared world. Prompt law (`buildCrossReferenceMessages` in both collaborators): **the target comes first** — its name/identity is never replaced; borrowed facts (factions, places, history, speech register) are re-pointed at the target; glue is invented where the source is silent; never copy the source bio wholesale. Same JSON output shape as Expand → reuses `parseCharacterConsistencyFixJson` / `parsePersonaUpdateJson` + the `AiFieldChangesSheet` review flow. Works on brand-new (blank) cards too, which is the fast cast-building path. While the AI runs (and for Expand / Compact / Consistency / AI builder on the same screens), `ai_busy_banner.dart` shows a spinner + status line under the AppBar (and a compact AppBar spinner) so the wait is obvious.
+- **Add / update character… (chat ⋮ hub)** — `add_update_character_sheet.dart` routes to **New character from this chat**, **Add temporary character**, or **Update saved character from chat**. New-from-chat can optionally be **based on** one character card + one persona picked from the chat (each optional; leave both blank for the classic chat-only draft): `buildChatCharacterExportMessagesWithReferences()` in `world_workshop_builder.dart` prepends `_referenceCharacterBlock` / `_referencePersonaBlock` context so the draft is grounded in the chosen cards — borrowed world facts are re-pointed at the new character, whose own identity always wins. A **"Who they are" description text field** in the sheet is passed as `characterSummary` (shown as "Identity hint" in the generation prompt) so you can describe the new character's role and relationship to the reference cards or current scene.
+- **Save reliability** — see §8: flushed + retried writes, serialized `upsert()` with on-disk verification; on failure the editor **stays open** with edits intact and shows the error.
+- **~token badges** — approximate prompt token counts on lists and editors.
+
+### Personas
+
+- Multiple {{user}} identities; list may be empty; default for new chats.
+- Per-chat persona override (⋮ menu).
+- Structured fields injected labeled in system prompt.
+- **AI persona builder** — plain English → full persona JSON via **Character & persona builds** settings.
+- **Duplicate** from list ⋮ menu.
+
+---
+
+## 17. Creation Center (workshops)
+
+**Not the same as regular chat** — `world_workshop_chat_screen.dart`
+
+- Brainstorm worlds; export lorebook, characters, persona.
+- **Narrator / Director aware** — the collaborator prompt explicitly bans "opening scenes" (removed feature) and drafts **Narrator card** text instead when asked for an opening/hook; it knows Director cards command the next reply in live chats.
+- **Persona detect** merges aliases (public name + true name = one identity).
+- **Standard** vs **Add more workshop details** merge depth on create/update.
+- Long assistant drafts marked **PRIMARY WORKSHOP DRAFT** in export prompts.
+- Persona/character export uses **Character & persona builds** model, sampling, and prompts (not wand guidance).
+- **World dashboard** hub: summarize, glossary, scene ideas, play plan, bundle import/export.
+- **Fix last** chip — in-place correction on previous AI reply.
+- **World summary** folding (like memory summarize).
+- Workshop chat import from live chat with trim options.
+- Linked lorebook in prompts **off by default** after create (toggle in ⋮).
+- **⋮ menu leads with "API & connection"** → `api_settings_screen.dart` (quick model swaps while testing workshop builds).
+- **No Narrator theater button** here.
+
+Workshops listed on Home horizontal row + Settings → Creation Center.
+
+---
+
+## 18. UI map — every major screen
+
+| Screen | Entry | Purpose |
+|--------|-------|---------|
+| Home | App start | History, Creation Center tiles, New FAB, Settings |
+| Chat | Tap history row | Solo/group RP |
+| Group setup | New → Group | Cast, order, lore/note/auto chips |
+| Characters | Settings / pickers | CRUD, import/export, categories |
+| Character edit | Tap character | All card fields, lorebook tab, wand |
+| Personas | Settings | CRUD, default persona |
+| Lorebooks | Settings → World Info | Global books list |
+| Lorebook edit | Tap book | Entries + wand |
+| Lore settings | Settings | Scan depth, budget, recursive |
+| Creation Center list | Home / Settings | Workshops |
+| Workshop chat | Tap workshop | World building chat |
+| Settings hub | Gear | All settings menus |
+| API settings | Banner / hub | Key, models, credits |
+| Sampling | Settings | Generation parameters |
+| AI collaborator | Settings | Wand guidance, auto-wrap, Paths, Narrator (main chat model) |
+| Character & persona builds | Settings | Shared build model + sampling; character + persona JSON prompts |
+| Global chat prompts | Settings | System + post-history |
+| Appearance | Settings | Theme Studio |
+| Backup & restore | Settings | .anima-backup (local only) |
+
+---
+
+## 19. Settings hub — complete menu
+
+| Menu item | Screen |
+|-----------|--------|
+| API & connection (banner) | `api_settings_screen.dart` |
+| Personas | `personas_screen.dart` |
+| Characters | `characters_screen.dart` |
+| World Info & lore | `lore_settings_screen.dart` → lorebooks |
+| Creation Center | `world_workshop_list_screen.dart` |
+| Generation parameters | `sampling_settings_screen.dart` |
+| AI collaborator | `collaborator_settings_screen.dart` |
+| Character & persona builds | `character_build_settings_screen.dart` |
+| Global chat prompts | `global_chat_prompts_screen.dart` |
+| Appearance | `appearance_settings_screen.dart` |
+| Backup, restore & sync | `backup_restore_screen.dart` |
+
+---
+
+## 20. AI collaborator utilities
+
+**Settings:** `collaborator_settings_screen.dart`
+
+| Note / toggle | Used by |
+|---------------|---------|
+| **Wand guidance** | Character/persona/lore field wands; Creation Center brainstorm chat |
+| **Auto-wrap dialogue on send** | Local `"quote"` wrapping on send (no AI) |
+| **Roadway / Paths** | Paths brainstorm + combine |
+| **Narrator** | Chat Narrator **Generate** (capped tokens + cleanup) |
+
+Plus **Enter to send** toggle (desktop).
+
+**Not here:** full character/persona JSON builds → **Settings → Character & persona builds**.
+
+### One-shot AI helpers (non-streaming `complete()`)
+
+| Feature | Service |
+|---------|---------|
+| Paths | `roadway_service.dart` |
+| Narrator Generate | `narrator_service.dart` |
+| Guide AI (character voice) | `character_guide_service.dart` |
+| Rewrite reply | `reply_rewrite_service.dart` |
+| Memory summarize | `chat_context_service.dart` |
+| Character/lore/persona wand | `character_collaborator.dart`, `lore_collaborator.dart`, `persona_collaborator.dart` |
+| Workshop exports · character-from-chat (+ optional base card/persona grounding) | `world_workshop_builder.dart` |
+
+---
+
+## 21. Theming and chat experience
+
+**Theme Studio** (`appearance_settings_screen.dart` + `ui_style_settings.dart`)
+
+- 8 presets (glass + solid); custom colors/fonts.
+- **Classic** vs **Storybook** chat layout.
+- Chat background image + blur; bubble opacity.
+- Speaker name above messages; side hero portrait (Storybook).
+- RP colors: `*actions*` gold italic, `"dialogue"` bolder.
+- Avatar shape/size scale.
+- **Live preview** renders real RP sample lines through `RpRichText` — user bubble shows `*action* + "dialogue"` (`isUser: true`), AI bubble shows `*smiles* "Hello there."` — so RP color/font changes are visible exactly as they'll appear in chat before saving.
+
+`AppearanceController` reloads `MaterialApp` theme on save.
+
+---
+
+## 22. Backup and restore (local only)
+
+See §8. User must **re-enter API key** after restore.
+
+**No cloud sync.** The cross-device sync feature was **removed** in build 72 (with `SyncService`, `SyncTarget`, the four `sync_*` settings keys and the `saf` dependency), because the owner's phone and laptop are always together and the cloud path only added rate-limit stalls and Google tokens that expired every 7 days. `Create backup` writes one `.anima-backup` file and `Restore backup` applies it; moving the file between devices is up to the user. `scripts/sync_phone_anima.sh` automates that copy over USB/Wi-Fi adb (`--auto` newest-wins, `--library` for the whole library, `--dry-run` to preview, and it refuses to overwrite without confirmation). API key: never in the backup; each device keeps its own.
+
+---
+
+## 23. Import and export
+
+| Asset | Format |
+|-------|--------|
+| Character card | ST JSON, PNG with embedded JSON |
+| Chat | `anima_chat_v1` JSON or plain `Name: text` |
+| Lorebook | ST World Info JSON |
+| Persona | Anima persona JSON (app format, or an AI-written card with `identity`/`looks`/`backstory`/`motivations`) |
+| Full app | `.anima-backup` |
+| Workshop | World bundle (hub) |
+
+---
+
+## 24. Avatars and image generation
+
+- Local files in `avatars/`; referenced by filename on card/persona.
+- **Generate avatar** sheet — NanoGPT image model from Settings.
+- Prompt built from appearance-focused lines (~1150 char cap).
+- Tap avatar → fullscreen viewer; long-press in chat → edit card/persona.
+
+---
+
+## 25. Macros
+
+| Macro | Replaces with |
+|-------|----------------|
+| `{{user}}`, `<USER>` | Active persona name |
+| `{{char}}`, `<BOT>` | Speaking character |
+| `{{original}}` | In card system prompt → Anima default seed |
+
+Applied in `PromptBuilder.applyMacros()`.
+
+---
+
+## 26. Testing and quality
+
+```bash
+flutter test      # 404 tests
+flutter analyze
+```
+
+Tests cover: lore scan, prompt builders, card codec, backup, sync stability, character save serialization, chat-export reference grounding, narrator cleanup, model catalog, workshop JSON parsers, etc.
+
+**Agent rule:** Run tests after meaningful changes; update the living documents — `AGENTS.md` always, plus `PROJECT_REFERENCE.md` / `README.md` when the change affects mechanics or the user-facing catalog.
+
+---
+
+## 27. Build, release, and desktop branding
+
+| Platform | Command |
+|----------|---------|
+| New Linux PC (toolchain) | `bash scripts/setup_linux_dev.sh [--github]` — or `bash scripts/setup_linux_dev_noroot.sh` when no admin password is available |
+| Phone ↔ PC with **no cloud** | `bash scripts/sync_phone_anima.sh --auto` (adb transfer; `--push` / `--pull` / `--library` / `--dry-run`) |
+| Buildable copy when the source is on exFAT | `bash scripts/dev_copy_linux.sh` |
+| Android APK | `flutter build apk --release` |
+| Windows (normal path) | **GitHub Actions** `.github/workflows/windows-release.yml` — dispatched by `./deploy.sh` step 7/7, attaches `Anima-<version>-windows-x64.zip` to **v1.0.0** |
+| Windows (local fallback) | `.\scripts\update_windows.ps1 -Zip` on the Windows PC — **never add `-Release`** (it would overwrite the current APK asset with that PC's older one) |
+| Linux | `./scripts/update_linux.sh` |
+
+- **exFAT rule:** Flutter writes its plugin links as symlinks and **rethrows** when the filesystem
+  refuses them (`flutter_tools/lib/src/flutter_plugins.dart` → `handleSymlinkException`, which only
+  covers Windows). A checkout on an exFAT/FAT drive (e.g. the Jay-Storage copy of this repo)
+  therefore cannot run `flutter pub get`, `flutter test`, or any build. Run those from **`~/Anima`**
+  (created by `scripts/dev_copy_linux.sh`) and keep the two in step with git push/pull.
+  The current Linux checkout is **`~/Documents/Git Projects/Anima`** (branch `main`) on the ext4 root
+  partition, and it builds in place — no copy needed, because `ln -s` works there.
+- Linux dev environment (current host, Kubuntu 26.04, `jay@jaykubuntu`): Flutter at
+  `~/development/flutter`, **Temurin JDK 17 at `~/development/jdk-17`** (Adoptium tarball — the
+  no-sudo script cannot use apt), Android SDK at `~/Android/Sdk` (platform 36 + build-tools 36.0.0,
+  licences accepted), env vars written to `~/.bashrc` and
+  `~/.config/environment.d/50-flutter-dev.conf` (shared with Journey), Cursor's
+  `dart.flutterSdkPath` set by the script, and the git identity restored. The only apt packages the
+  app needs are the Linux *desktop* build libs (`clang cmake ninja-build pkg-config libgtk-3-dev
+  libsecret-1-dev libjsoncpp-dev`), `gh` for the release script, and `android-sdk-platform-tools-common`
+  for phone udev rules — Android builds work without any of them.
+- **Project checkout:** `~/Documents/Git Projects/Anima` on the ext4 root partition — the folder name
+  contains a space, so quote it in shell commands.
+- **Release signing:** `android/key.properties` + `android/keystore/anima-release.jks` are committed
+  on purpose so every machine signs identically; `android/app/build.gradle.kts` falls back to debug
+  signing when they are absent. A mismatched signature on the phone
+  (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`) needs one `adb uninstall com.anima.anima` first.
+- **Windows build (CI):** `.github/workflows/windows-release.yml` runs on a `windows-latest` runner
+  (`flutter pub get` → `dart run flutter_launcher_icons` → `flutter build windows --release` →
+  `Compress-Archive` → `softprops/action-gh-release` with `tag_name: v1.0.0`) so the zip replaces the
+  previous one on the same release. `deploy.sh` step **7/7** dispatches it
+  (`gh workflow run windows-release.yml -f tag=v1.0.0`) and polls the release asset's `createdAt`
+  until it is newer than the dispatch time (max ~15 min, fail-fast if `gh` is unreachable). Local
+  fallback on the Windows PC: `.\scripts\update_windows.ps1 -Zip`; **never `-Release`**, because that
+  re-uploads whatever APK sits in that PC's `build\` folder over the current asset.
+- **Windows + Visual Studio 18:** `permission_handler_windows 0.2.2` sets `/await` and includes
+  C++/WinRT, which drags in `<experimental/coroutine>`; MSVC/STL 14.51 (VS 18, GitHub's
+  `windows-latest`) rejects that with `error C2338` / `STL1011`. `windows/CMakeLists.txt` calls
+  `add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)` before
+  `include(flutter/generated_plugins.cmake)` so the definition inherits into every plugin
+  subdirectory. Keep it while any Windows plugin still uses `/await`.
+- Version: `pubspec.yaml` → `1.0.0+NN` (NN = build number).
+- Releases: GitHub `v1.0.0` tag — APK + Linux zip + Windows zip (every asset is overwritten per build; the Windows zip is produced by GitHub Actions).
+- Icon: `assets/branding/anima_icon.png` → Android, Windows exe, Linux bundle.
+
+---
+
+## 28. Known limits and not implemented
+
+- Not full SillyTavern group orchestration.
+- NovelAI / Agnai / Risu lore converters not implemented (ST JSON works).
+- No TTS (removed).
+- Backup not encrypted.
+- PNG export needs PNG avatar for embedded image.
+- Windows build requires Windows host.
+- Back-burner: undo send, last-chat resume, pinned mood chips, memory preview panel, etc.
+
+---
+
+## 29. Related documents
+
+| File | Audience | Contents |
+|------|----------|----------|
+| **`PROJECT_REFERENCE.md`** (this file) | External AI, deep onboarding | Full technical encyclopedia |
+| **`AGENTS.md`** | Cursor coding agents | Current status, roadmap, code map, machine notes, next actions |
+| **`README.md`** | Human owner | Screen-by-screen feature catalog, install, release history |
+
+**How to feed Gemini / external AI:**
+
+1. Attach or paste **`PROJECT_REFERENCE.md`** for full context.
+2. Optionally add **`AGENTS.md`** for latest build status and agent conventions.
+3. For UI-only questions, **`README.md`** sections 1–4 are enough.
+
+**Living-document rule (for every agent):** these three files are the living docs and must be updated together after meaningful work — **`AGENTS.md`** always (status/roadmap/code map), **this file** whenever mechanics or architecture changed (update the section you touched), and **`README.md`** whenever anything user-visible changed.
+
+---
+
+*End of PROJECT_REFERENCE.md*
